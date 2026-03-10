@@ -1,0 +1,18 @@
+config:
+  version: "v1"
+  fdsn_server: "https://service.iris.edu"
+  fdsn_servers:
+    - "https://service.iris.edu"
+    - "https://eida.bgr.de"
+
+stations:
+  - { network: "IU", station: "ANMO", location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
+  - { network: "IU", station: "ANTO", location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
+  - { network: "IU", station: "BBSR", location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
+  - { network: "IU", station: "CCM",  location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
+  - { network: "IU", station: "HRV",  location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
+  - { network: "IU", station: "KONO", location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
+  - { network: "IU", station: "MA2",  location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
+  - { network: "IU", station: "NWAO", location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
+  - { network: "IU", station: "OTAV", location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
+  - { network: "IU", station: "ULN",  location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }`

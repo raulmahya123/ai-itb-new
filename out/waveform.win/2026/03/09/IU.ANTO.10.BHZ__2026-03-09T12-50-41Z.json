@@ -1,0 +1,22 @@
+{
+  "topic": "waveform.window",
+  "key": "IU.ANTO.10.BHZ",
+  "ts": 1773060641319,
+  "ts_iso_utc": "2026:03:09T12-50-41Z",
+  "mseed_path": "out\\waveform.win\\2026\\03\\09\\IU.ANTO.10.BHZ__2026-03-09T12-50-41Z.mseed",
+  "network": "IU",
+  "station": "ANTO",
+  "location": "10",
+  "channel": "BHZ",
+  "starttime": "2026-03-09T12:50:41.319536Z",
+  "endtime": "2026-03-09T12:51:43.019536Z",
+  "sampling_rate": 40.0,
+  "npts": 2469,
+  "duration_sec": 61.7,
+  "gap_count": 0,
+  "overlap_count": 0,
+  "pct_filled": 1,
+  "bytes": 12288,
+  "version": "1.0",
+  "window_sec": 60
+}

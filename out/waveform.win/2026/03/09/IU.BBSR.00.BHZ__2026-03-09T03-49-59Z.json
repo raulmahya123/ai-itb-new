@@ -1,0 +1,22 @@
+{
+  "topic": "waveform.window",
+  "key": "IU.BBSR.00.BHZ",
+  "ts": 1773028199594,
+  "ts_iso_utc": "2026:03:09T03-49-59Z",
+  "mseed_path": "out\\waveform.win\\2026\\03\\09\\IU.BBSR.00.BHZ__2026-03-09T03-49-59Z.mseed",
+  "network": "IU",
+  "station": "BBSR",
+  "location": "00",
+  "channel": "BHZ",
+  "starttime": "2026-03-09T03:49:59.594538Z",
+  "endtime": "2026-03-09T03:51:01.569538Z",
+  "sampling_rate": 40.0,
+  "npts": 2480,
+  "duration_sec": 61.98,
+  "gap_count": 0,
+  "overlap_count": 0,
+  "pct_filled": 1,
+  "bytes": 12288,
+  "version": "1.0",
+  "window_sec": 60
+}
