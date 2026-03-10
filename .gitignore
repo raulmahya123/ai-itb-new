@@ -1,0 +1,29 @@
+# ===== Editors & Tools =====
+.idea/
+.vscode/
+
+# ===== Python Cache =====
+_pycache_/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.build/
+.pytest_cache/
+.mypy_cache/
+.cache/
+
+# ===== Secret Environment Files =====
+.env
+*.env
+
+# ===== Ignore SharePoint Dataset (MSEED/XML) =====
+data/
+
+# ===== Ignore Output Folder =====
+out/
+
+# ===== Safe extra ignores =====
+*.mseed
+*.xml
+*.jsonl
