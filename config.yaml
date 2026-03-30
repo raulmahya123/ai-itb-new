@@ -1,18 +1,19 @@
 config:
   version: "v1"
   fdsn_server: "https://service.iris.edu"
-  fdsn_servers:
-    - "https://service.iris.edu"
-    - "https://eida.bgr.de"
 
 stations:
-  - { network: "IU", station: "ANMO", location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
-  - { network: "IU", station: "ANTO", location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
-  - { network: "IU", station: "BBSR", location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
-  - { network: "IU", station: "CCM",  location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
-  - { network: "IU", station: "HRV",  location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
-  - { network: "IU", station: "KONO", location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
-  - { network: "IU", station: "MA2",  location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
-  - { network: "IU", station: "NWAO", location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
-  - { network: "IU", station: "OTAV", location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }
-  - { network: "IU", station: "ULN",  location: "00", channel: "BHZ", sampling_rate: 20.0, enabled: true }`
+  # 🔥 core (yang sudah kamu pakai)
+  - { network: "IU", station: "ANMO", channel: "BHZ", enabled: true }
+  - { network: "IU", station: "COLA", channel: "BHZ", enabled: true }
+  - { network: "IU", station: "TUC",  channel: "BHZ", enabled: true }
+  - { network: "IU", station: "COR",  channel: "BHZ", enabled: true }
+
+  # 🔥 tambahan (biar coverage kuat)
+  - { network: "IU", station: "KONO", channel: "BHZ", enabled: true }
+  - { network: "IU", station: "KEV",  channel: "BHZ", enabled: true }
+  - { network: "IU", station: "PAYG", channel: "BHZ", enabled: true }
+
+  # 🔥 optional tambahan lagi (kalau mau lebih stabil)
+  - { network: "IU", station: "PTCN", channel: "BHZ", enabled: false }
+  - { network: "IU", station: "MAJO", channel: "BHZ", enabled: false }

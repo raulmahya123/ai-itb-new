@@ -2,12 +2,24 @@ from obspy.clients.seedlink.easyseedlink import EasySeedLinkClient
 from obspy import Stream
 import os
 import json
+import yaml
 
 WINDOW_SEC = 60
 buffers = {}
 
+# =========================
+# LOAD CONFIG YAML
+# =========================
+with open("config.yaml", "r") as f:
+    config = yaml.safe_load(f)
+
+# SeedLink server
+server = config.get("seedlink_server", "rtserve.iris.washington.edu")
+
+# =========================
+# HELPER
+# =========================
 def safe(v, default=""):
-    """sanitize metadata"""
     if v is None:
         return default
     v = str(v).strip()
@@ -15,6 +27,9 @@ def safe(v, default=""):
         return default
     return v.replace(" ", "")
 
+# =========================
+# SEEDLINK CLIENT
+# =========================
 class SeedlinkMonitor(EasySeedLinkClient):
 
     def on_data(self, trace):
@@ -32,11 +47,9 @@ class SeedlinkMonitor(EasySeedLinkClient):
             buffers[key] = Stream()
 
         buffers[key] += trace
-
         buffers[key].merge(method=1)
 
         tr = buffers[key][0]
-
         duration = tr.stats.endtime - tr.stats.starttime
 
         if duration >= WINDOW_SEC:
@@ -48,12 +61,15 @@ class SeedlinkMonitor(EasySeedLinkClient):
             month = tr.stats.starttime.strftime("%m")
             day = tr.stats.starttime.strftime("%d")
 
-            folder = os.path.join("out","waveform.win",year,month,day)
+            folder = os.path.join("out", "waveform.win", year, month, day)
             os.makedirs(folder, exist_ok=True)
 
-            filename = f"{net}.{sta}.{loc}.{cha}__{ts_iso}.mseed"
+            filename = f"{key}__{ts_iso}.mseed"
             mseed_path = os.path.join(folder, filename)
 
+            # =========================
+            # SAVE MSEED
+            # =========================
             try:
                 buffers[key].write(mseed_path, format="MSEED")
             except Exception as e:
@@ -61,19 +77,19 @@ class SeedlinkMonitor(EasySeedLinkClient):
                 buffers[key] = Stream()
                 return
 
+            # =========================
+            # METADATA
+            # =========================
             gaps = buffers[key].get_gaps()
             gap_count = len(gaps)
             overlap_count = sum(1 for g in gaps if g[6] < 0)
 
-            duration = tr.stats.endtime - tr.stats.starttime
-
             pct_filled = 1 if gap_count == 0 else 0
 
             metadata = {
-                "topic": "waveform.window",
                 "key": key,
                 "ts": ts,
-                "ts_iso_utc": ts_iso.replace("-",":",2),
+                "ts_iso_utc": ts_iso,
                 "mseed_path": mseed_path,
                 "network": net,
                 "station": sta,
@@ -83,7 +99,7 @@ class SeedlinkMonitor(EasySeedLinkClient):
                 "endtime": str(tr.stats.endtime),
                 "sampling_rate": tr.stats.sampling_rate,
                 "npts": tr.stats.npts,
-                "duration_sec": round(duration,2),
+                "duration_sec": round(duration, 2),
                 "gap_count": gap_count,
                 "overlap_count": overlap_count,
                 "pct_filled": pct_filled,
@@ -92,23 +108,44 @@ class SeedlinkMonitor(EasySeedLinkClient):
                 "window_sec": WINDOW_SEC
             }
 
-            json_file = mseed_path.replace(".mseed",".json")
+            # =========================
+            # SAVE JSON
+            # =========================
+            json_file = mseed_path.replace(".mseed", ".json")
 
             try:
-                with open(json_file,"w") as f:
-                    json.dump(metadata,f,indent=2)
+                with open(json_file, "w") as f:
+                    json.dump(metadata, f, indent=2)
             except Exception as e:
-                print("JSON ERROR:",e)
+                print("JSON ERROR:", e)
 
-            print("Saved:", mseed_path)
+            print("✅ Saved:", mseed_path)
 
             buffers[key] = Stream()
 
 
-client = SeedlinkMonitor("rtserve.iris.washington.edu")
+# =========================
+# INIT CLIENT
+# =========================
+client = SeedlinkMonitor(server)
 
-client.select_stream("IU","ANMO","BHZ")
-client.select_stream("IU","ANTO","BHZ")
-client.select_stream("IU","BBSR","BHZ")
+# =========================
+# REGISTER STATIONS
+# =========================
+for sta in config["stations"]:
 
+    if not sta.get("enabled", True):
+        continue
+
+    net = sta["network"]
+    station = sta["station"]
+    cha = sta["channel"]
+
+    print(f"📡 Subscribe: {net}.{station}.{cha}")
+
+    client.select_stream(net, station, cha)
+
+# =========================
+# RUN CLIENT
+# =========================
 client.run()
