@@ -1,13 +1,15 @@
-from obspy import read, Stream
+from obspy import Stream
+from obspy.clients.seedlink.easyseedlink import EasySeedLinkClient
 from obspy.clients.fdsn import Client
-import numpy as np
-import asyncio
-import torch
-import pandas as pd
-import glob
+from datetime import datetime, timezone, timedelta
 import os
 import yaml
-from datetime import datetime, timezone, timedelta
+import signal
+import sys
+import torch
+import pandas as pd
+import numpy as np
+import json
 
 # =========================
 # CONFIG
@@ -15,8 +17,13 @@ from datetime import datetime, timezone, timedelta
 with open("config.yaml", "r") as f:
     cfg = yaml.safe_load(f)
 
+SEEDLINK_SERVER = cfg.get("seedlink_server", "rtserve.iris.washington.edu")
+STATIONS = cfg.get("stations", [])
+WINDOW_SEC = cfg.get("window_sec", 60)
 FDSN_SERVER = cfg["config"]["fdsn_server"]
-STATION_LIST = cfg["stations"]
+
+OUTPUT_DIR = os.path.join(os.getcwd(), "output")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # =========================
 # LOAD STATIONS
@@ -25,7 +32,7 @@ def load_stations():
     client = Client(FDSN_SERVER)
     rows = []
 
-    for s in STATION_LIST:
+    for s in STATIONS:
         if not s.get("enabled", True):
             continue
 
@@ -62,36 +69,52 @@ STATIONS_DF = load_stations()
 from seisbench.models import PhaseNet
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-model = PhaseNet.from_pretrained("instance")
-model.to(device)
+model = PhaseNet.from_pretrained("instance").to(device)
 model.eval()
 
 # =========================
 # GAMMA
 # =========================
-import sys
 sys.path.append("GaMMA")
 from gamma.utils import association
 
 global_picks = []
+buffers = {}
 
 # =========================
 # PHASENET
 # =========================
-def run_phasenet_sync(stream):
+def run_phasenet(stream, station, start_dt):
     try:
-        annotations = model.annotate(stream)
+        st = stream.copy()
+        st.detrend("demean")
+
+        tr = st[0]
+        sr = tr.stats.sampling_rate
+
+        nyquist = sr / 2
+        freqmax = min(0.45 * sr, nyquist - 0.1)
+
+        st.filter("bandpass", freqmin=1, freqmax=freqmax)
+        st.normalize()
+
+        if tr.stats.npts < sr * 10:
+            return []
+
+        annotations = model.annotate(st)
         picks = []
 
         for tr in annotations:
             prob = tr.data
-            phase = tr.stats.channel
             sr = tr.stats.sampling_rate
+            phase = tr.stats.channel
 
-            last = -9999
+            last_time = -999
 
             for i in range(len(prob)):
-                if prob[i] > 0.75 and (i - last) > 800:
+                t = i / sr
+
+                if prob[i] > 0.6 and (t - last_time) > 3.0:
 
                     if "P" in phase.upper():
                         ph = "P"
@@ -100,12 +123,16 @@ def run_phasenet_sync(stream):
                     else:
                         continue
 
+                    pick_time = start_dt + timedelta(seconds=t)
+
                     picks.append({
-                        "time": i / sr,
-                        "type": ph,
+                        "timestamp": pick_time,
+                        "station": station,
+                        "phase": ph,
                         "prob": float(prob[i])
                     })
-                    last = i
+
+                    last_time = t
 
         return picks
 
@@ -114,193 +141,185 @@ def run_phasenet_sync(stream):
         return []
 
 # =========================
-# GAMMA FINAL (TUNED)
+# GAMMA
 # =========================
 def run_gamma():
     global global_picks
 
     if len(global_picks) < 6:
-        return []
+        return
 
     df = pd.DataFrame(global_picks)
 
-    # 🔥 WINDOW LEBIH BESAR (BIAR STATION MASUK)
+    if df.empty or "station" not in df.columns:
+        return
+
     now = df["timestamp"].max()
     df = df[df["timestamp"] > now - timedelta(seconds=120)]
 
-    print("\n📊 AFTER TIME FILTER:", len(df))
-
     if df.empty:
-        return []
+        return
 
     df = df.sort_values("timestamp")
-
-    # 🔥 LEBIH LONGGAR
     df = df.groupby("station").tail(60)
 
-    # =========================
-    # CLUSTER (LEBIH FLEXIBLE)
-    # =========================
-    if len(df) > 10:
-        mid = df["timestamp"].median()
-
-        df_cluster = df[
-            (df["timestamp"] > mid - timedelta(seconds=15)) &
-            (df["timestamp"] < mid + timedelta(seconds=15))
-        ]
-
-        if df_cluster["station"].nunique() >= 3:
-            df = df_cluster
-
-    print("📊 AFTER CLUSTER:", len(df))
-
-    # =========================
-    # MERGE
-    # =========================
     df = df.merge(STATIONS_DF, left_on="station", right_on="id", how="left")
-
-    if "station_x" in df.columns:
-        df = df.rename(columns={"station_x": "station"})
-
-    df = df.drop(columns=[c for c in ["station_y", "id_y"] if c in df.columns])
-
-    print("📊 AFTER MERGE:", len(df))
-
-    print("\n📊 STATIONS USED:")
-    print(df["station"].unique())
-    print("📊 STATION COUNT:", df["station"].nunique())
-
     df = df.dropna(subset=["x", "y", "z"])
 
-    if df["station"].nunique() < 3:
-        print("⚠️ Not enough stations")
-        return []
+    if df.empty or df["station"].nunique() < 3:
+        return
 
-    # =========================
-    # SPREAD
-    # =========================
-    spread = (df["timestamp"].max() - df["timestamp"].min()).total_seconds()
-    print(f"⏱ SPREAD: {spread:.2f}s")
-
-    if spread > 18:
-        print("⚠️ Spread terlalu besar")
-        return []
-
-    print("\n📊 PHASE COUNT:")
-    print(df["phase"].value_counts())
-
-    # =========================
-    # FORMAT FINAL
-    # =========================
     df["id"] = df["station"] + "_" + df["timestamp"].astype(str)
     df["type"] = df["phase"]
     df["phase_time"] = df["timestamp"]
     df["phase_type"] = df["phase"]
     df["phase_score"] = df["prob"]
-
     df = df.rename(columns={"station": "station_id"})
 
-    # =========================
-    # CONFIG SUPER TUNED 🔥
-    # =========================
     config = {
         "dims": ["x", "y", "z"],
         "method": "BGMM",
-        "oversample_factor": 10,
-        "time_sigma": 5.0,
         "vel": {"p": 6.0, "s": 3.5},
-        "min_picks_per_eq": 1,
-        "use_amplitude": False
     }
 
     try:
         events, _ = association(df, STATIONS_DF, config)
 
-        print("\n📊 EVENTS RAW:", events)
-        print("\n🌋 GAMMA EVENTS:", events)
-
-        global_picks = []
-        return events
+        if len(events) > 0:
+            print("\n🌋 EVENTS:", events)
 
     except Exception as e:
-        print("❌ GaMMA ERROR:", e)
-        return []
+        print("❌ GAMMA ERROR:", e)
 
 # =========================
-# PROCESS FILE
+# SEEDLINK
 # =========================
-async def process_file(path):
-    try:
-        filename = os.path.basename(path)
-        parts = filename.split("__")[0].split(".")
-        station = f"{parts[0]}.{parts[1]}"
+class SeedlinkMonitor(EasySeedLinkClient):
 
-        print("📡 FILE STATION:", station)
+    def on_data(self, trace):
 
-        st = read(path)
+        net = trace.stats.network
+        sta = trace.stats.station
+        loc = trace.stats.location or "00"
+        cha = trace.stats.channel
 
-        st.merge(method=1, fill_value="interpolate")
-        st = st.select(channel="BHZ")
-
-        if len(st) == 0:
+        if not cha.endswith("Z"):
             return
 
-        tr = max(st, key=lambda x: x.stats.npts)
+        key = f"{net}.{sta}.{loc}.{cha}"
 
-        if tr.stats.npts < 1000:
+        trace.data = trace.data.astype("float32")
+
+        if key not in buffers:
+            buffers[key] = Stream()
+
+        buffers[key] += trace
+        buffers[key].merge(method=1, fill_value=0)
+
+        tr = buffers[key][0]
+
+        if tr.stats.npts < tr.stats.sampling_rate * 10:
             return
 
-        st = Stream([tr])
-        st.detrend("demean")
-        st.normalize()
+        duration = tr.stats.endtime - tr.stats.starttime
+        if duration < WINDOW_SEC:
+            return
 
-        picks = await asyncio.to_thread(run_phasenet_sync, st)
+        start = tr.stats.starttime
+        aligned_start = start - (start.timestamp % WINDOW_SEC)
 
-        print(f"⚡ Picks: {len(picks)}")
+        buffers[key].trim(
+            starttime=aligned_start,
+            endtime=aligned_start + WINDOW_SEC
+        )
 
+        tr = buffers[key][0]
         start_dt = tr.stats.starttime.datetime.replace(tzinfo=timezone.utc)
 
-        for i, p in enumerate(picks):
-            pick_time = start_dt + timedelta(seconds=p["time"])
+        # =========================
+        # PHASENET
+        # =========================
+        station_id = f"{net}.{sta}"
+        picks = run_phasenet(buffers[key], station_id, start_dt)
 
-            global_picks.append({
-                "id": f"{station}_{i}_{pick_time.timestamp()}",
-                "timestamp": pick_time,
-                "station": station,
-                "phase": p["type"],
-                "prob": p["prob"]
-            })
+        print(f"⚡ {station_id} PICKS:", len(picks))
 
-        print("📊 GLOBAL PICKS:", len(global_picks))
+        for p in picks:
+            global_picks.append(p)
+            print(f"📍 {p['phase']} | {p['timestamp']} | {p['prob']:.2f}")
 
-        run_gamma()
+        # =========================
+        # SAVE MSEED
+        # =========================
+        if np.ma.isMaskedArray(tr.data):
+            tr.data = tr.data.filled(0)
 
-    except Exception as e:
-        print("❌ ERROR:", e)
+        ts_iso = start_dt.strftime("%Y-%m-%dT%H-%M-%SZ")
 
-# =========================
-# WATCH
-# =========================
-async def watch_folder(folder):
-    processed = set()
+        folder = os.path.join(
+            "out", "waveform.win",
+            start_dt.strftime("%Y"),
+            start_dt.strftime("%m"),
+            start_dt.strftime("%d")
+        )
+        os.makedirs(folder, exist_ok=True)
 
-    while True:
-        files = glob.glob(os.path.join(folder, "**", "*.mseed"), recursive=True)
+        filename = f"{key}__{ts_iso}.mseed"
+        path = os.path.join(folder, filename)
 
-        for f in files:
-            if f not in processed:
-                await process_file(f)
-                processed.add(f)
+        buffers[key].write(path, format="MSEED")
 
-        await asyncio.sleep(2)
+        # =========================
+        # SAVE JSON + PICKS 🔥
+        # =========================
+        picks_json = [
+            {
+                "phase": p["phase"],
+                "time": p["timestamp"].isoformat(),
+                "prob": round(p["prob"], 3)
+            }
+            for p in picks
+        ]
+
+        metadata = {
+            "key": key,
+            "network": net,
+            "station": sta,
+            "channel": cha,
+            "starttime_utc": start_dt.isoformat(),
+            "endtime_utc": tr.stats.endtime.datetime.replace(tzinfo=timezone.utc).isoformat(),
+            "sampling_rate": tr.stats.sampling_rate,
+            "npts": tr.stats.npts,
+            "picks": picks_json  # 🔥 INI YANG KAMU MAU
+        }
+
+        json_path = path.replace(".mseed", ".json")
+        with open(json_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+
+        print("💾 Saved:", path)
+        print("📄 JSON:", json_path)
+
+        # =========================
+        # SHIFT WINDOW
+        # =========================
+        buffers[key].trim(
+            starttime=aligned_start + WINDOW_SEC,
+            nearest_sample=False
+        )
 
 # =========================
 # MAIN
 # =========================
-async def main():
-    DATA_DIR = os.path.join(os.getcwd(), "out", "waveform.win")
-    print("🚀 FINAL PIPELINE (EVENT FRIENDLY MODE)")
-    await watch_folder(DATA_DIR)
+client = SeedlinkMonitor(SEEDLINK_SERVER)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+print("🚀 START REALTIME PIPELINE")
+
+for sta in STATIONS:
+    if not sta.get("enabled", True):
+        continue
+
+    channel = sta.get("channel", "BHZ")
+    client.select_stream(sta["network"], sta["station"], channel)
+
+client.run()
